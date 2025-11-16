@@ -65,7 +65,8 @@ def main():
     INDEX_TICKER = index_options[selected_index_name]
 
     # 2. Currency Selection
-    currency_options = ['EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY']
+    # Include USD option; when USD is selected, no forex fetch is needed (conversion = 1.0)
+    currency_options = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY']
     TARGET_CURRENCY = st.sidebar.selectbox("2. Convert to Currency", currency_options)
     BASE_CURRENCY = 'USD'
 
@@ -86,18 +87,30 @@ def main():
     intraday_intervals = ['1m', '2m', '5m', '15m', '30m', '60m', '90m', '1h']
     PERIOD = '59d' if INTERVAL in intraday_intervals else '1y'
     forex_ticker = f"{BASE_CURRENCY}{TARGET_CURRENCY}=X"
-    tickers_to_fetch = [INDEX_TICKER, forex_ticker]
 
-    with st.spinner(f'Fetching data for {selected_index_name}...'):
-        all_data = fetch_data(tickers_to_fetch, PERIOD, INTERVAL)
+    # Fetch index data first (always needed)
+    with st.spinner(f'Fetching index data for {selected_index_name}...'):
+        all_data = fetch_data([INDEX_TICKER], PERIOD, INTERVAL)
+
+    index_data = all_data.get(INDEX_TICKER)
+
+    # If target is not USD, fetch forex pair. If target is USD, we'll create a synthetic forex series = 1.0
+    forex_data = None
+    if TARGET_CURRENCY != BASE_CURRENCY:
+        with st.spinner(f'Fetching forex data for {BASE_CURRENCY}/{TARGET_CURRENCY}...'):
+            forex_dict = fetch_data([forex_ticker], PERIOD, INTERVAL)
+        forex_data = forex_dict.get(forex_ticker)
 
     # --- MAIN PAGE CONTENT ---
     st.title(f"{selected_index_name} Price Chart in {TARGET_CURRENCY}")
     st.markdown(f"Displaying a **{selected_interval_name}** chart for the last **{PERIOD}**.")
 
-    if INDEX_TICKER in all_data and forex_ticker in all_data:
-        index_data = all_data[INDEX_TICKER]
-        forex_data = all_data[forex_ticker]
+    # Ensure we have index data and either fetched forex data or USD conversion case
+    if index_data is not None and (forex_data is not None or TARGET_CURRENCY == BASE_CURRENCY):
+
+        # For USD target, create a forex DataFrame with Close == 1.0 matching the index dates
+        if TARGET_CURRENCY == BASE_CURRENCY:
+            forex_data = pd.DataFrame({'Close': 1.0}, index=index_data.index)
 
         combined_df, converted_close_col = process_data(index_data, forex_data, BASE_CURRENCY, TARGET_CURRENCY, show_ma20, show_ma50)
 
@@ -159,7 +172,10 @@ def main():
         with st.expander("View & Download Raw Data"):
             st.dataframe(combined_df.sort_index(ascending=False).head(100))
             csv = combined_df.to_csv(index=True)
+            # CSV download
             st.download_button(label="Download data as CSV", data=csv, file_name=f'{INDEX_TICKER}_{TARGET_CURRENCY}_data.csv', mime='text/csv')
+            # CTF download (same content as CSV but .ctf extension)
+            st.download_button(label="Download data as CTF", data=csv, file_name=f'{INDEX_TICKER}_{TARGET_CURRENCY}_data.ctf', mime='text/plain')
 
     else:
         st.error("Failed to fetch data for one or both tickers. Please check your settings or try again later.")
